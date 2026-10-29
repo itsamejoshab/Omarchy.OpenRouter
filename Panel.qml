@@ -50,20 +50,27 @@ Panel {
   // Every monitor reads the one shared price object. This widget does not fetch.
   readonly property var priceView: PriceState.view
   readonly property string priceStatus: priceView && priceView.status ? String(priceView.status) : "empty"
-  // decide returns every row. The tape shows four at a time and scrolls the rest.
-  // Placeholders are already four and do not scroll. One, two, or three are not padded.
+  // decide returns every row. The tape shows as many as fit beside the center
+  // section, up to four, and scrolls the rest. Placeholders do not scroll.
   readonly property var priceRows: priceView && priceView.rows ? priceView.rows : []
-  readonly property bool priceScroll: priceStatus === "rows" && priceRows.length > 4
   readonly property int priceWindow: {
     if (priceStatus === "unavailable") return 0
-    if (priceScroll) return 4
-    return priceRows.length
+    var rows = priceRows.length
+    if (rows <= 0) return 0
+    var cell = tape.naturalCell
+    var room = tapeRoom
+    if (!(cell > 0) || !(room > 0)) return 0
+    var fit = Math.floor(room / cell)
+    var cap = Math.min(4, rows)
+    if (fit >= 1) return Math.min(cap, fit)
+    return room >= cell * 0.45 ? 1 : 0
   }
+  readonly property bool priceScroll: priceStatus === "rows" && priceWindow > 0 && priceRows.length > priceWindow
   readonly property var scrollRows: {
     var rows = priceRows
     if (!priceScroll) return rows
     // Three copies, not two. A loop can start with any model at the left
-    // edge and still travel one full cycle while four cells stay filled.
+    // edge and still travel one full cycle while the window stays filled.
     // Two copies run out of cells when that edge is near the end of the list.
     var copy = []
     var i
@@ -73,14 +80,117 @@ Panel {
     }
     return copy
   }
-  // Half of this monitor. Zero means the screen width could not be read, and
-  // the tape keeps its natural width instead of collapsing.
-  readonly property real monitorWidth: {
-    var host = root.QsWindow
-    var window = host ? host.window : null
-    var screen = window ? window.screen : null
-    var width = screen ? Number(screen.width) : 0
-    return isFinite(width) && width > 0 ? width : 0
+  // Room for quotes before this section meets the center section. The sides
+  // are anchored to the screen edge and the center is centered, so a wide
+  // tape otherwise paints over the clock. Zero hides the tape. Widths read
+  // here are the center cluster and the other widgets in this section, not
+  // this tape, so the limit does not chase its own size.
+  readonly property real tapeRoom: {
+    var host = sectionHost()
+    if (!host) return 0
+    var edges = centerEdges(host.bar)
+    if (!edges) return 0
+    var gap = Style.space(12)
+    var margin = Style.space(8)
+    var others = siblingWidth(host.section)
+    var room = creditOnLeft
+      ? (edges.left - gap) - margin - others
+      : (host.bar.width - margin) - (edges.right + gap) - others
+    room -= button.implicitWidth
+    return room > 0 ? room : 0
+  }
+
+  function containsItem(ancestor, item) {
+    var guard = 0
+    var cursor = item
+    while (cursor && guard < 16) {
+      if (cursor === ancestor) return true
+      cursor = cursor.parent
+      guard++
+    }
+    return false
+  }
+
+  // The bar surface is the full-monitor item that holds the center section.
+  // This widget's side section is the ancestor directly under that surface.
+  function sectionHost() {
+    var screen = root.QsWindow && root.QsWindow.window ? root.QsWindow.window.screen : null
+    var screenWidth = screen ? screen.width : 0
+    if (!(screenWidth > 0)) return null
+    var item = root
+    var guard = 0
+    while (item && item.parent && guard < 16) {
+      var parent = item.parent
+      var kids = parent.children
+      if (kids && kids.length >= 3 && parent.width >= screenWidth - 2) {
+        var center = null
+        var i
+        for (i = 0; i < kids.length; i++) {
+          var child = kids[i]
+          if (child && child.width >= parent.width - 4) { center = child; break }
+        }
+        if (center && item !== center) return { bar: parent, section: item }
+      }
+      item = item.parent
+      guard++
+    }
+    return null
+  }
+
+  function siblingWidth(section) {
+    var row = section && section.item ? section.item : null
+    if (!row || !row.children) return 0
+    var total = 0
+    var kids = row.children
+    var i
+    for (i = 0; i < kids.length; i++) {
+      var slot = kids[i]
+      if (!slot || !(slot.width > 0) || containsItem(slot, root)) continue
+      total += slot.width
+    }
+    return total
+  }
+
+  function centerEdges(bar) {
+    var kids = bar.children
+    var center = null
+    var i
+    for (i = 0; i < kids.length; i++) {
+      var child = kids[i]
+      if (child && child.width >= bar.width - 4) { center = child; break }
+    }
+    if (!center) return null
+    var inner = center
+    var guard = 0
+    while (inner && guard < 4) {
+      var next = null
+      var ck = inner.children || []
+      var c
+      for (c = 0; c < ck.length; c++) {
+        if (ck[c] && ck[c].item && ck[c].width >= inner.width - 4) { next = ck[c].item; break }
+      }
+      if (!next) break
+      inner = next
+      guard++
+    }
+    var minX = bar.width
+    var maxX = 0
+    var found = false
+    var nodes = inner.children || []
+    var j
+    for (j = 0; j < nodes.length; j++) {
+      var node = nodes[j]
+      if (!node || node.visible === false || !(node.width > 0) || node.width >= bar.width - 4) continue
+      var point = node.mapToItem(bar, 0, 0)
+      if (!point) continue
+      var left = point.x
+      var right = left + node.width
+      if (left < minX) minX = left
+      if (right > maxX) maxX = right
+      found = true
+    }
+    if (!found) return null
+    return { left: minX, right: maxX }
   }
 
   onShowPricesChanged: PriceState.setShown(showPrices)
@@ -361,7 +471,11 @@ Panel {
       x: root.creditOnLeft ? button.implicitWidth : 0
       width: implicitWidth
       height: button.implicitHeight
-      implicitWidth: root.priceStatus === "unavailable" ? unavailableLabel.implicitWidth : quoteWindow.width
+      implicitWidth: {
+        var quotes = root.priceStatus === "unavailable" ? unavailableLabel.implicitWidth : quoteWindow.width
+        if (!(root.tapeRoom > 0)) return 0
+        return Math.min(quotes, root.tapeRoom)
+      }
       implicitHeight: button.implicitHeight
 
       property bool interactive: true
@@ -375,16 +489,16 @@ Panel {
       property string edgeId: ""
       property real edgeFraction: 0
       // Equal width of the widest current quote, including the reserved arrow
-      // column. Shrinks only when this monitor's half-width can be read.
+      // column. Cells stay that wide. The window count drops before a cell
+      // is squeezed, and a single cell shrinks only when one will not fit.
       readonly property real naturalCell: widthProbe.widest > 0
         ? widthProbe.widest
-        : (sampleTicker.implicitWidth + sampleArrow.implicitWidth + samplePrice.implicitWidth + Style.space(8))
+        : (sampleTicker.implicitWidth + sampleDot.implicitWidth + samplePrice.implicitWidth + sampleArrow.implicitWidth + sampleRule.implicitWidth)
       readonly property real cellWidth: {
         var natural = naturalCell
         var count = root.priceWindow
-        if (count <= 0) return natural
-        if (root.monitorWidth <= 0) return natural
-        var room = root.monitorWidth / 2 - button.implicitWidth
+        if (count <= 0 || !(natural > 0)) return 0
+        var room = root.tapeRoom
         if (!(room > 0)) return 0
         return Math.min(natural, room / count)
       }
@@ -513,6 +627,14 @@ Panel {
         font.pixelSize: Style.font.body
       }
       Text {
+        id: sampleDot
+        visible: false
+        text: " \u00b7 "
+        textFormat: Text.PlainText
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+      }
+      Text {
         id: sampleArrow
         visible: false
         text: " \u25b2"
@@ -523,7 +645,15 @@ Panel {
       Text {
         id: samplePrice
         visible: false
-        text: " $0.00"
+        text: "$0.00"
+        textFormat: Text.PlainText
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+      }
+      Text {
+        id: sampleRule
+        visible: false
+        text: " | "
         textFormat: Text.PlainText
         font.family: root.fontFamily
         font.pixelSize: Style.font.body
@@ -556,11 +686,25 @@ Panel {
           onCountChanged: widthProbe.rescan()
           delegate: Item {
             required property var modelData
-            readonly property real naturalWidth: probeTicker.implicitWidth + probeArrow.implicitWidth + probePrice.implicitWidth + Style.space(8)
+            readonly property real naturalWidth: probeTicker.implicitWidth + probeDot.implicitWidth + probePrice.implicitWidth + probeArrow.implicitWidth + probeRule.implicitWidth
 
             Text {
               id: probeTicker
               text: String(modelData.ticker || "")
+              textFormat: Text.PlainText
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+            }
+            Text {
+              id: probeDot
+              text: " \u00b7 "
+              textFormat: Text.PlainText
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+            }
+            Text {
+              id: probePrice
+              text: String(modelData.price || "")
               textFormat: Text.PlainText
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
@@ -573,8 +717,8 @@ Panel {
               font.pixelSize: Style.font.body
             }
             Text {
-              id: probePrice
-              text: " " + String(modelData.price || "")
+              id: probeRule
+              text: " | "
               textFormat: Text.PlainText
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
@@ -656,6 +800,28 @@ Panel {
                   renderType: Text.NativeRendering
                 }
 
+                Text {
+                  id: dotText
+                  text: " \u00b7 "
+                  textFormat: Text.PlainText
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  renderType: Text.NativeRendering
+                }
+
+                Text {
+                  id: priceText
+                  text: String(quoteCell.modelData.price || "")
+                  textFormat: Text.PlainText
+                  color: root.bar ? root.bar.barForeground : root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  renderType: Text.NativeRendering
+                  elide: Text.ElideRight
+                  width: Math.min(implicitWidth, Math.max(0, quoteCell.width - tickerText.implicitWidth - dotText.implicitWidth - arrowSlot.width - ruleText.implicitWidth))
+                }
+
                 Item {
                   id: arrowSlot
                   width: sampleArrow.implicitWidth
@@ -663,7 +829,8 @@ Panel {
                   anchors.verticalCenter: parent.verticalCenter
 
                   Text {
-                    anchors.centerIn: parent
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
                     visible: quoteCell.modelData.arrow === "up" || quoteCell.modelData.arrow === "down"
                     text: quoteCell.modelData.arrow === "down" ? " \u25bc" : " \u25b2"
                     textFormat: Text.PlainText
@@ -676,16 +843,19 @@ Panel {
                   }
                 }
 
+                Item {
+                  width: Math.max(0, quoteCell.width - tickerText.implicitWidth - dotText.implicitWidth - priceText.width - arrowSlot.width - ruleText.implicitWidth)
+                  height: 1
+                }
+
                 Text {
-                  id: priceText
-                  text: " " + String(quoteCell.modelData.price || "")
+                  id: ruleText
+                  text: " | "
                   textFormat: Text.PlainText
-                  color: root.bar ? root.bar.barForeground : root.foreground
+                  color: root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
                   renderType: Text.NativeRendering
-                  elide: Text.ElideRight
-                  width: Math.max(0, quoteCell.width - tickerText.implicitWidth - arrowSlot.width)
                 }
               }
             }
