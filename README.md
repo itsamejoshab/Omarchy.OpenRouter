@@ -1,9 +1,10 @@
 # Omarchy.OpenRouter
 
-An [Omarchy](https://omarchy.org/) shell plugin: remaining OpenRouter credit
-in the bar, and the ledger behind it in a popup: what was purchased against
-the balance, what this key is capped at, and what has been spent today, this
-week, and this month.
+A fork of [SpoilHeap/Omarchy.OpenRouter](https://github.com/SpoilHeap/Omarchy.OpenRouter).
+The original plugin, by SpoilHeap, puts remaining OpenRouter credit in the bar
+and the ledger behind it in a popup: what was purchased against the balance,
+what this key is capped at, and what has been spent today, this week, and this
+month. This fork adds the price tape.
 
 ```
   $74.75
@@ -11,10 +12,28 @@ week, and this month.
 
 ![Bar icon and popup showing account balance, spend today/week/month, and actions to add credits, view activity, or replace the key](preview.png)
 
+## Price tape
+
+![Price tape in the bar: the credit figure, then MIMPR · $543.75 and KMK31 · $56.66, separated by bars](price-tape.png)
+
+A dollar button in the credit panel turns the tape on in this widget's existing
+bar slot. It shows OpenRouter's programming models, most popular this week
+first. Each quote is a short ticker, a dot, and one blended price per billion
+tokens, three parts input to one part output: `MIMPR · $543.75`. A bar
+separates quotes. An arrow sits on the price when that rounded figure moved
+against the last saved day. The strip stays in its own bar section and stops
+before the center clock, so a crowded bar shows fewer than four quotes and
+scrolls the rest.
+
+The scroll repaints for as long as prices are on. With the tape running,
+Quickshell sat near a full core, well above what the shell usually costs. The
+credit figure does not do that. `showPrices` defaults off. Turn it on when you
+want the tape, and off again when you don't.
+
 ## Install
 
 ```bash
-git clone https://github.com/SpoilHeap/Omarchy.OpenRouter.git ~/.config/omarchy/plugins/io.github.spoilheap.openrouter
+git clone https://github.com/itsamejoshab/Omarchy.OpenRouter.git ~/.config/omarchy/plugins/io.github.spoilheap.openrouter
 omarchy plugin enable io.github.spoilheap.openrouter
 omarchy restart shell
 ```
@@ -147,7 +166,7 @@ In this widget's entry in `~/.config/omarchy/shell.json`, or via
 | `lowBalance` | `5` | Turn the bar figure urgent at or below this many credits |
 | `barLabel` | `"Amount"` | `"Icon only"` keeps the bar to the icon alone |
 | `keyCommand` | `""` | Shell command that prints the key |
-| `showPrices` | `false` | Toy price tape in this bar slot. Leave it off. |
+| `showPrices` | `false` | Programming-model price tape in this bar slot |
 
 Numbers and booleans need `--json`, or they land in `shell.json` as strings
 (`showPrices` is only on when the value is boolean `true`):
@@ -163,11 +182,8 @@ A vertical bar has no room for a figure and falls back to the icon on its own,
 whatever `barLabel` says. The price tape stays hidden there too; the setting
 is kept, and turning it on still closes the panel.
 
-The tape was a toy. A dollar button in the panel paints programming-model
-prices in this same bar slot and scrolls them. That scroll repaints for as
-long as prices are on, and Quickshell sat near a full core while it did —
-well above what the shell usually costs. The credit figure does not do that.
-`showPrices` defaults off, and we leave it off.
+See [Price tape](#price-tape) for what the dollar button adds, and why it is
+off unless you turn it on.
 
 ## Files
 
