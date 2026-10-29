@@ -6,8 +6,10 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
+import "price"
 
 // OpenRouter credit in the bar, with the ledger behind it in a popup.
+// When prices are on, this same slot also shows the programming-model tape.
 //
 // The bar answers one question — how much is left — and the panel answers the
 // follow-ups: what was purchased against it, what this key is capped at, and
@@ -37,6 +39,178 @@ Panel {
   readonly property string glyphEyeOff: "\uf070"    // nf-fa-eye_slash
   readonly property string glyphSave: "\uf00c"      // nf-fa-check
   readonly property string glyphCancel: "\uf00d"    // nf-fa-close
+  readonly property string glyphPrice: "\uf155"     // nf-fa-usd
+
+  // One choice for every monitor: it lives on this widget's layout entry.
+  // Absent and anything other than true stay off.
+  readonly property bool showPrices: setting("showPrices", false) === true
+  // A vertical bar has no horizontal run of quotes. The choice stays; the
+  // tape comes back when the bar is horizontal again.
+  readonly property bool tapeVisible: showPrices && !vertical
+  // Every monitor reads the one shared price object. This widget does not fetch.
+  readonly property var priceView: PriceState.view
+  readonly property string priceStatus: priceView && priceView.status ? String(priceView.status) : "empty"
+  // decide returns every row. The tape shows as many as fit beside the center
+  // section, up to four, and scrolls the rest. Placeholders do not scroll.
+  readonly property var priceRows: priceView && priceView.rows ? priceView.rows : []
+  readonly property int priceWindow: {
+    if (priceStatus === "unavailable") return 0
+    var rows = priceRows.length
+    if (rows <= 0) return 0
+    var cell = tape.naturalCell
+    var room = tapeRoom
+    if (!(cell > 0) || !(room > 0)) return 0
+    var fit = Math.floor(room / cell)
+    var cap = Math.min(4, rows)
+    if (fit >= 1) return Math.min(cap, fit)
+    return room >= cell * 0.45 ? 1 : 0
+  }
+  readonly property bool priceScroll: priceStatus === "rows" && priceWindow > 0 && priceRows.length > priceWindow
+  readonly property var scrollRows: {
+    var rows = priceRows
+    if (!priceScroll) return rows
+    // Three copies, not two. A loop can start with any model at the left
+    // edge and still travel one full cycle while the window stays filled.
+    // Two copies run out of cells when that edge is near the end of the list.
+    var copy = []
+    var i
+    var pass
+    for (pass = 0; pass < 3; pass++) {
+      for (i = 0; i < rows.length; i++) copy.push(rows[i])
+    }
+    return copy
+  }
+  // Room for quotes before this section meets the center section. The sides
+  // are anchored to the screen edge and the center is centered, so a wide
+  // tape otherwise paints over the clock. Zero hides the tape. Widths read
+  // here are the center cluster and the other widgets in this section, not
+  // this tape, so the limit does not chase its own size.
+  readonly property real tapeRoom: {
+    var host = sectionHost()
+    if (!host) return 0
+    var edges = centerEdges(host.bar)
+    if (!edges) return 0
+    var gap = Style.space(12)
+    var margin = Style.space(8)
+    var others = siblingWidth(host.section)
+    var room = creditOnLeft
+      ? (edges.left - gap) - margin - others
+      : (host.bar.width - margin) - (edges.right + gap) - others
+    room -= button.implicitWidth
+    return room > 0 ? room : 0
+  }
+
+  function containsItem(ancestor, item) {
+    var guard = 0
+    var cursor = item
+    while (cursor && guard < 16) {
+      if (cursor === ancestor) return true
+      cursor = cursor.parent
+      guard++
+    }
+    return false
+  }
+
+  // The bar surface is the full-monitor item that holds the center section.
+  // This widget's side section is the ancestor directly under that surface.
+  function sectionHost() {
+    var screen = root.QsWindow && root.QsWindow.window ? root.QsWindow.window.screen : null
+    var screenWidth = screen ? screen.width : 0
+    if (!(screenWidth > 0)) return null
+    var item = root
+    var guard = 0
+    while (item && item.parent && guard < 16) {
+      var parent = item.parent
+      var kids = parent.children
+      if (kids && kids.length >= 3 && parent.width >= screenWidth - 2) {
+        var center = null
+        var i
+        for (i = 0; i < kids.length; i++) {
+          var child = kids[i]
+          if (child && child.width >= parent.width - 4) { center = child; break }
+        }
+        if (center && item !== center) return { bar: parent, section: item }
+      }
+      item = item.parent
+      guard++
+    }
+    return null
+  }
+
+  function siblingWidth(section) {
+    var row = section && section.item ? section.item : null
+    if (!row || !row.children) return 0
+    var total = 0
+    var kids = row.children
+    var i
+    for (i = 0; i < kids.length; i++) {
+      var slot = kids[i]
+      if (!slot || !(slot.width > 0) || containsItem(slot, root)) continue
+      total += slot.width
+    }
+    return total
+  }
+
+  function centerEdges(bar) {
+    var kids = bar.children
+    var center = null
+    var i
+    for (i = 0; i < kids.length; i++) {
+      var child = kids[i]
+      if (child && child.width >= bar.width - 4) { center = child; break }
+    }
+    if (!center) return null
+    var inner = center
+    var guard = 0
+    while (inner && guard < 4) {
+      var next = null
+      var ck = inner.children || []
+      var c
+      for (c = 0; c < ck.length; c++) {
+        if (ck[c] && ck[c].item && ck[c].width >= inner.width - 4) { next = ck[c].item; break }
+      }
+      if (!next) break
+      inner = next
+      guard++
+    }
+    var minX = bar.width
+    var maxX = 0
+    var found = false
+    var nodes = inner.children || []
+    var j
+    for (j = 0; j < nodes.length; j++) {
+      var node = nodes[j]
+      if (!node || node.visible === false || !(node.width > 0) || node.width >= bar.width - 4) continue
+      var point = node.mapToItem(bar, 0, 0)
+      if (!point) continue
+      var left = point.x
+      var right = left + node.width
+      if (left < minX) minX = left
+      if (right > maxX) maxX = right
+      found = true
+    }
+    if (!found) return null
+    return { left: minX, right: maxX }
+  }
+
+  onShowPricesChanged: PriceState.setShown(showPrices)
+  Component.onCompleted: PriceState.setShown(showPrices)
+  // Left section keeps the credit button on the screen-edge end. Center,
+  // right, and a layout that cannot be read keep it on the right.
+  readonly property bool creditOnLeft: {
+    var layout = bar && bar.layoutConfig ? bar.layoutConfig : null
+    var entries = layout ? layout.left : null
+    if (!Array.isArray(entries)) return false
+    var id = String(moduleName || "")
+    if (id === "") return false
+    for (var i = 0; i < entries.length; i++) {
+      var entry = entries[i]
+      var entryId = typeof entry === "string" ? entry
+        : (entry && entry.id != null ? String(entry.id) : "")
+      if (entryId === id) return true
+    }
+    return false
+  }
 
   // A vertical bar has no room for a figure, so it falls back to the icon the
   // same way the media and clock widgets do.
@@ -122,6 +296,34 @@ Panel {
 
   function refresh() {
     service.refresh()
+    // The credit timer calls service.refresh() directly, so it does not land here.
+    // While prices are off, the shared object ignores the request.
+    PriceState.request()
+  }
+
+  // The object passed to the shell replaces the layout entry, so every key
+  // already on this widget has to be copied across or it is dropped.
+  function persistSettings(values) {
+    var entry = { id: root.moduleName }
+    var existing
+    if (root.settings) {
+      for (existing in root.settings) {
+        if (existing !== "id") entry[existing] = root.settings[existing]
+      }
+    }
+    var key
+    for (key in values) entry[key] = values[key]
+    root.settings = entry
+    if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
+      root.bar.shell.updateEntryInline(root.moduleName, entry)
+  }
+
+  // On closes the panel so the bar is what's on screen, including when the
+  // bar is vertical and the tape itself stays hidden. Off leaves the panel up.
+  function setShowPrices(on) {
+    if (on === root.showPrices) return
+    persistSettings({ showPrices: on === true })
+    if (on === true) root.close()
   }
 
   function focusPanel() {
@@ -194,8 +396,8 @@ Panel {
     else toggle()
   }
 
-  implicitWidth: button.implicitWidth
-  implicitHeight: button.implicitHeight
+  implicitWidth: slotRow.implicitWidth
+  implicitHeight: slotRow.implicitHeight
 
   readonly property real openPanelIndicatorWidth: button.labelWidth
 
@@ -206,6 +408,7 @@ Panel {
     keyRevealed = false
     if (panelFlick) panelFlick.contentY = 0
     service.refresh()
+    PriceState.request()
     Qt.callLater(root.focusPanel)
   }
 
@@ -221,6 +424,7 @@ Panel {
     function onKeySaved() {
       root.keyEditing = false
       root.keyRevealed = false
+      PriceState.request()
       Qt.callLater(root.focusPanel)
     }
   }
@@ -251,17 +455,435 @@ Panel {
     }
   }
 
-  WidgetButton {
-    id: button
-    anchors.fill: parent
-    bar: root.bar
-    text: root.barText
-    fontSize: root.iconOnly ? Style.bar.iconFont : Style.font.body
-    active: root.barAlarming
-    dimmed: root.barDimmed
-    horizontalMargin: 8.5
-    tooltipText: Model.tooltip(service.source, service.remaining, service.hasRemaining, service.freeTier)
-    onPressed: function(code) { root.pressed(code) }
+  // The tape and the credit button share this widget's one bar slot. The
+  // button stays at the outer end: left of the tape on the left section,
+  // right of it otherwise.
+  Item {
+    id: slotRow
+    width: implicitWidth
+    height: implicitHeight
+    implicitWidth: (root.tapeVisible ? tape.implicitWidth : 0) + button.implicitWidth
+    implicitHeight: Math.max(button.implicitHeight, root.tapeVisible ? tape.implicitHeight : 0)
+
+    Item {
+      id: tape
+      visible: root.tapeVisible
+      x: root.creditOnLeft ? button.implicitWidth : 0
+      width: implicitWidth
+      height: button.implicitHeight
+      implicitWidth: {
+        var quotes = root.priceStatus === "unavailable" ? unavailableLabel.implicitWidth : quoteWindow.width
+        if (!(root.tapeRoom > 0)) return 0
+        return Math.min(quotes, root.tapeRoom)
+      }
+      implicitHeight: button.implicitHeight
+
+      property bool interactive: true
+      property bool pressable: true
+      property bool concealed: false
+      property bool tooltipHovered: visible && pointerOver
+      property bool pointerOver: false
+      property string hoverId: ""
+      property var clickBar: root.bar
+      property var registeredBar: null
+      property string edgeId: ""
+      property real edgeFraction: 0
+      // Equal width of the widest current quote, including the reserved arrow
+      // column. Cells stay that wide. The window count drops before a cell
+      // is squeezed, and a single cell shrinks only when one will not fit.
+      readonly property real naturalCell: widthProbe.widest > 0
+        ? widthProbe.widest
+        : (sampleTicker.implicitWidth + sampleDot.implicitWidth + samplePrice.implicitWidth + sampleArrow.implicitWidth + sampleRule.implicitWidth)
+      readonly property real cellWidth: {
+        var natural = naturalCell
+        var count = root.priceWindow
+        if (count <= 0 || !(natural > 0)) return 0
+        var room = root.tapeRoom
+        if (!(room > 0)) return 0
+        return Math.min(natural, room / count)
+      }
+
+      function triggerPress(button) {
+        if (root.bar) root.bar.hideTooltip(tape)
+        root.pressed(button)
+      }
+
+      function captureEdge() {
+        var rows = root.priceRows
+        var count = rows.length
+        var cell = cellWidth
+        if (!root.priceScroll || count <= 0 || !(cell > 0)) return
+        var loop = count * cell
+        var offset = -strip.x
+        offset = ((offset % loop) + loop) % loop
+        var index = Math.floor(offset / cell + 0.0001) % count
+        var row = rows[index]
+        if (row && row.id) edgeId = String(row.id)
+        edgeFraction = offset / loop
+      }
+
+      function playScroll() {
+        scrollAnim.stop()
+        if (!visible || !root.priceScroll || pointerOver || !(cellWidth > 0)) return
+        var count = root.priceRows.length
+        var loop = count * cellWidth
+        var current = strip.x
+        while (current <= -loop) current += loop
+        while (current > 0) current -= loop
+        strip.x = current
+        scrollAnim.from = current
+        scrollAnim.to = current - loop
+        scrollAnim.duration = count * 4000
+        scrollAnim.start()
+      }
+
+      function restoreEdge() {
+        scrollAnim.stop()
+        var rows = root.priceRows
+        var count = rows.length
+        var cell = cellWidth
+        if (!root.priceScroll || count <= 0 || !(cell > 0)) {
+          strip.x = 0
+          return
+        }
+        var loop = count * cell
+        var index = -1
+        var i
+        for (i = 0; i < count; i++) {
+          if (rows[i] && String(rows[i].id) === edgeId) { index = i; break }
+        }
+        var offset = 0
+        if (index >= 0) offset = index * cell
+        else {
+          offset = edgeFraction * loop
+          if (!(offset >= 0) || offset >= loop) offset = 0
+        }
+        strip.x = -offset
+        playScroll()
+      }
+
+      function updateHover(x) {
+        if (!pointerOver) pointerOver = true
+        if (!root.bar || root.priceStatus !== "rows" || !(cellWidth > 0)) return
+        var local = x - quoteWindow.x - strip.x
+        var index = Math.floor(local / cellWidth)
+        var rows = root.scrollRows
+        var row = index >= 0 && index < rows.length ? rows[index] : null
+        var modelId = row && row.id ? String(row.id) : ""
+        if (modelId === hoverId) return
+        hoverId = modelId
+        if (modelId === "") root.bar.hideTooltip(tape)
+        else root.bar.showTooltip(tape, modelId + "\n" + String(row.hover || ""))
+      }
+
+      function syncClickRegistration() {
+        if (registeredBar && registeredBar.unregisterClickTarget) registeredBar.unregisterClickTarget(tape)
+        registeredBar = clickBar
+        if (visible && registeredBar && registeredBar.registerClickTarget) registeredBar.registerClickTarget(tape)
+      }
+
+      property bool layoutReady: false
+      // Identity of the row sequence, so a refresh can put the same model
+      // back at the left edge even when the count does not change.
+      property string trackedIds: {
+        var rows = root.priceRows
+        var ids = []
+        var i
+        for (i = 0; i < rows.length; i++)
+          ids.push(rows[i] && rows[i].id ? String(rows[i].id) : String(i))
+        return ids.join("\n")
+      }
+      property real trackedCell: cellWidth
+      onTrackedIdsChanged: if (layoutReady) restoreEdge()
+      onTrackedCellChanged: if (layoutReady) restoreEdge()
+      onPointerOverChanged: {
+        if (!layoutReady) return
+        if (pointerOver) scrollAnim.stop()
+        else playScroll()
+      }
+
+      onVisibleChanged: {
+        syncClickRegistration()
+        if (!visible) scrollAnim.stop()
+        else if (layoutReady) playScroll()
+      }
+      onClickBarChanged: syncClickRegistration()
+      Component.onCompleted: {
+        syncClickRegistration()
+        layoutReady = true
+        restoreEdge()
+      }
+      Component.onDestruction: {
+        if (registeredBar && registeredBar.unregisterClickTarget) registeredBar.unregisterClickTarget(tape)
+      }
+
+      // Hidden samples for the empty-cell width before a real quote is measured.
+      Text {
+        id: sampleTicker
+        visible: false
+        text: "XXXXX"
+        textFormat: Text.PlainText
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+      }
+      Text {
+        id: sampleDot
+        visible: false
+        text: " \u00b7 "
+        textFormat: Text.PlainText
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+      }
+      Text {
+        id: sampleArrow
+        visible: false
+        text: " \u25b2"
+        textFormat: Text.PlainText
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+      }
+      Text {
+        id: samplePrice
+        visible: false
+        text: "$0.00"
+        textFormat: Text.PlainText
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+      }
+      Text {
+        id: sampleRule
+        visible: false
+        text: " | "
+        textFormat: Text.PlainText
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+      }
+
+      Item {
+        id: widthProbe
+        // Laid out, but not shown: a hidden item can report a zero width.
+        opacity: 0
+        enabled: false
+        width: 0
+        height: 0
+        clip: true
+        property real widest: 0
+
+        function rescan() {
+          var max = 0
+          var i
+          for (i = 0; i < probeRepeater.count; i++) {
+            var item = probeRepeater.itemAt(i)
+            if (item) max = Math.max(max, item.naturalWidth)
+          }
+          if (max > 0) max = Math.ceil(max)
+          if (max !== widest) widest = max
+        }
+
+        Repeater {
+          id: probeRepeater
+          model: root.priceStatus === "unavailable" ? [] : root.priceRows
+          onCountChanged: widthProbe.rescan()
+          delegate: Item {
+            required property var modelData
+            readonly property real naturalWidth: probeTicker.implicitWidth + probeDot.implicitWidth + probePrice.implicitWidth + probeArrow.implicitWidth + probeRule.implicitWidth
+
+            Text {
+              id: probeTicker
+              text: String(modelData.ticker || "")
+              textFormat: Text.PlainText
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+            }
+            Text {
+              id: probeDot
+              text: " \u00b7 "
+              textFormat: Text.PlainText
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+            }
+            Text {
+              id: probePrice
+              text: String(modelData.price || "")
+              textFormat: Text.PlainText
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+            }
+            Text {
+              id: probeArrow
+              text: " \u25b2"
+              textFormat: Text.PlainText
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+            }
+            Text {
+              id: probeRule
+              text: " | "
+              textFormat: Text.PlainText
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+            }
+            onNaturalWidthChanged: widthProbe.rescan()
+            Component.onCompleted: widthProbe.rescan()
+          }
+        }
+      }
+
+      MouseArea {
+        id: tapeMouse
+        anchors.fill: parent
+        acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        onEntered: function(mouse) {
+          tape.pointerOver = true
+          tape.updateHover(mouse.x)
+        }
+        onPositionChanged: function(mouse) { if (tape.pointerOver) tape.updateHover(mouse.x) }
+        onExited: {
+          tape.pointerOver = false
+          tape.hoverId = ""
+          if (root.bar) root.bar.hideTooltip(tape)
+        }
+        onClicked: function(mouse) { tape.triggerPress(mouse.button) }
+      }
+
+      Text {
+        id: unavailableLabel
+        visible: root.priceStatus === "unavailable"
+        anchors.verticalCenter: parent.verticalCenter
+        text: "prices unavailable"
+        textFormat: Text.PlainText
+        color: root.bar ? root.bar.barForeground : root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+        renderType: Text.NativeRendering
+      }
+
+      Item {
+        id: quoteWindow
+        visible: root.priceStatus !== "unavailable"
+        z: 1
+        clip: true
+        anchors.verticalCenter: parent.verticalCenter
+        width: root.priceWindow * tape.cellWidth
+        height: parent.height
+
+        Row {
+          id: strip
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: 0
+          onXChanged: tape.captureEdge()
+
+          Repeater {
+            model: root.priceStatus === "unavailable" ? [] : root.scrollRows
+
+            delegate: Item {
+              id: quoteCell
+              required property var modelData
+              width: tape.cellWidth
+              implicitWidth: tape.cellWidth
+              implicitHeight: tickerText.implicitHeight
+              clip: true
+
+              Row {
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 0
+
+                Text {
+                  id: tickerText
+                  text: String(quoteCell.modelData.ticker || "")
+                  textFormat: Text.PlainText
+                  color: root.bar ? root.bar.barForeground : root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  renderType: Text.NativeRendering
+                }
+
+                Text {
+                  id: dotText
+                  text: " \u00b7 "
+                  textFormat: Text.PlainText
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  renderType: Text.NativeRendering
+                }
+
+                Text {
+                  id: priceText
+                  text: String(quoteCell.modelData.price || "")
+                  textFormat: Text.PlainText
+                  color: root.bar ? root.bar.barForeground : root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  renderType: Text.NativeRendering
+                  elide: Text.ElideRight
+                  width: Math.min(implicitWidth, Math.max(0, quoteCell.width - tickerText.implicitWidth - dotText.implicitWidth - arrowSlot.width - ruleText.implicitWidth))
+                }
+
+                Item {
+                  id: arrowSlot
+                  width: sampleArrow.implicitWidth
+                  height: sampleArrow.implicitHeight
+                  anchors.verticalCenter: parent.verticalCenter
+
+                  Text {
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: quoteCell.modelData.arrow === "up" || quoteCell.modelData.arrow === "down"
+                    text: quoteCell.modelData.arrow === "down" ? " \u25bc" : " \u25b2"
+                    textFormat: Text.PlainText
+                    color: quoteCell.modelData.arrow === "up"
+                      ? root.urgent
+                      : (root.bar ? root.bar.barForeground : root.foreground)
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                    renderType: Text.NativeRendering
+                  }
+                }
+
+                Item {
+                  width: Math.max(0, quoteCell.width - tickerText.implicitWidth - dotText.implicitWidth - priceText.width - arrowSlot.width - ruleText.implicitWidth)
+                  height: 1
+                }
+
+                Text {
+                  id: ruleText
+                  text: " | "
+                  textFormat: Text.PlainText
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  renderType: Text.NativeRendering
+                }
+              }
+            }
+          }
+        }
+
+        NumberAnimation {
+          id: scrollAnim
+          target: strip
+          property: "x"
+          loops: Animation.Infinite
+          easing.type: Easing.Linear
+        }
+      }
+    }
+
+    WidgetButton {
+      id: button
+      x: root.creditOnLeft || !root.tapeVisible ? 0 : tape.implicitWidth
+      bar: root.bar
+      text: root.barText
+      fontSize: root.iconOnly ? Style.bar.iconFont : Style.font.body
+      active: root.barAlarming
+      dimmed: root.barDimmed
+      horizontalMargin: 8.5
+      tooltipText: Model.tooltip(service.source, service.remaining, service.hasRemaining, service.freeTier)
+      onPressed: function(code) { root.pressed(code) }
+    }
   }
 
   KeyboardPanel {
@@ -333,22 +955,36 @@ Panel {
             }
 
             trailingControl: Component {
-              PanelActionButton {
-                id: refreshButton
-                iconText: root.glyphRefresh
-                tooltipText: "Refresh"
-                foreground: hero.foreground
-                fontFamily: hero.fontFamily
-                enabled: !service.refreshing
-                onClicked: root.refresh()
+              Row {
+                spacing: Style.space(4)
 
-                RotationAnimation on rotation {
-                  running: service.refreshing
-                  loops: Animation.Infinite
-                  from: 0
-                  to: 360
-                  duration: 900
-                  onRunningChanged: if (!running) refreshButton.rotation = 0
+                PanelActionButton {
+                  iconText: root.glyphPrice
+                  tooltipText: root.showPrices ? "Hide prices" : "Show prices"
+                  foreground: hero.foreground
+                  fontFamily: hero.fontFamily
+                  hasCursor: root.showPrices
+                  bordered: root.showPrices
+                  onClicked: root.setShowPrices(!root.showPrices)
+                }
+
+                PanelActionButton {
+                  id: refreshButton
+                  iconText: root.glyphRefresh
+                  tooltipText: "Refresh"
+                  foreground: hero.foreground
+                  fontFamily: hero.fontFamily
+                  enabled: !service.refreshing
+                  onClicked: root.refresh()
+
+                  RotationAnimation on rotation {
+                    running: service.refreshing
+                    loops: Animation.Infinite
+                    from: 0
+                    to: 360
+                    duration: 900
+                    onRunningChanged: if (!running) refreshButton.rotation = 0
+                  }
                 }
               }
             }
