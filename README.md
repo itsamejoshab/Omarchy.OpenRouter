@@ -3,7 +3,8 @@
 An [Omarchy](https://omarchy.org/) shell plugin: remaining OpenRouter credit
 in the bar, and the ledger behind it in a popup: what was purchased against
 the balance, what this key is capped at, and what has been spent today, this
-week, and this month.
+week, and this month. Turn prices on and the same bar slot runs a tape of
+programming-model prices beside the credit figure.
 
 ```
   $74.75
@@ -111,7 +112,8 @@ omarchy restart shell
 
 That removes the plugin's own checkout, but not the API key: it's written to
 `~/.config/omarchy/openrouter/`, outside the checkout, so a saved key survives
-a reinstall. To also remove the key and the today's-spend state file:
+a reinstall. To also remove the key, the today's-spend state file, and
+`price-history.json` (it lives next to `today-spend.json`):
 
 ```bash
 rm -rf ~/.config/omarchy/openrouter
@@ -122,10 +124,12 @@ file, clear that too — it isn't touched by either command above.
 
 ## Interactions
 
-- **Bar icon** — left: panel · right: refresh without opening · middle: top-up page
+- **Bar icon** — left: panel · right: refresh without opening · middle: top-up page.
+  With prices on, the tape beside it takes the same three clicks.
 - **Panel** — `j`/`k` move the cursor, Enter activates it (or refreshes when
   nothing is selected), `r` refresh, `t` top up, `a` activity, Tab moves to the
-  neighboring bar panel, Esc closes
+  neighboring bar panel, Esc closes. The dollar button in the header turns the
+  price tape on (and closes the panel) or off (and leaves the panel up).
 - **IPC** — `omarchy-shell io.github.spoilheap.openrouter <open|close|toggle|refresh|status|remaining>`
 
 ```bash
@@ -144,17 +148,21 @@ In this widget's entry in `~/.config/omarchy/shell.json`, or via
 | `lowBalance` | `5` | Turn the bar figure urgent at or below this many credits |
 | `barLabel` | `"Amount"` | `"Icon only"` keeps the bar to the icon alone |
 | `keyCommand` | `""` | Shell command that prints the key |
+| `showPrices` | `false` | Programming-model prices in this bar slot |
 
-Numbers need `--json`, or they land in `shell.json` as strings:
+Numbers and booleans need `--json`, or they land in `shell.json` as strings
+(`showPrices` is only on when the value is boolean `true`):
 
 ```bash
 omarchy bar set io.github.spoilheap.openrouter refreshIntervalSec 900 --json
 omarchy bar set io.github.spoilheap.openrouter lowBalance 10 --json
+omarchy bar set io.github.spoilheap.openrouter showPrices true --json
 omarchy bar set io.github.spoilheap.openrouter barLabel 'Icon only'
 ```
 
 A vertical bar has no room for a figure and falls back to the icon on its own,
-whatever `barLabel` says.
+whatever `barLabel` says. The price tape stays hidden there too; the setting
+is kept, and turning it on still closes the panel.
 
 ## Files
 
@@ -166,9 +174,14 @@ whatever `barLabel` says.
 | `Model.js` | formatting — money, ages, section wording |
 | `credits.sh` | resolves the key, asks OpenRouter, prints one JSON object |
 | `save-key.sh` | writes a key pasted into the panel to the key file, over stdin |
+| `prices.sh` | fetches programming models without a key, and reads and writes price history |
+| `price/PriceState.qml` | shared price fetch, timer, and history for every monitor |
+| `model.test.mjs` | `node model.test.mjs` — price formatting, days, and arrows |
 
 `credits.sh` also keeps `~/.config/omarchy/openrouter/today-spend.json`, its
 baseline for today's spend — safe to delete; it's just rebuilt on the next poll.
+`prices.sh` keeps `price-history.json` in that same directory. Both go away
+with `rm -rf ~/.config/omarchy/openrouter`.
 
 `credits.sh` always exits 0 with JSON, so a refused key or an unreachable API
 is a state the panel renders rather than an error it swallows. It can be run

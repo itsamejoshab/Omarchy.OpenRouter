@@ -23,7 +23,8 @@
       "refreshIntervalSec": 300,
       "lowBalance": 5,
       "barLabel": "Amount",
-      "keyCommand": ""
+      "keyCommand": "",
+      "showPrices": false
     },
     "schema": [
       {
@@ -59,6 +60,13 @@
         "label": "API key command",
         "defaultValue": "",
         "description": "Optional shell command that prints the OpenRouter key, e.g. 'pass show openrouter/api-key'. Leave empty to use OPENROUTER_API_KEY or ~/.config/omarchy/openrouter/key."
+      },
+      {
+        "key": "showPrices",
+        "type": "boolean",
+        "label": "Show model prices",
+        "defaultValue": false,
+        "description": "Show programming-model prices in this widget's bar slot, beside the credit figure."
       }
     ]
   }
